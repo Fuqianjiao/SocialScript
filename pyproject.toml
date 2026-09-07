@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "douyin-mcp-server"
 version = "1.4.1"
-description = "MCP server for downloading Douyin videos and extracting text"
+description = "Local social media video and spoken-script extractor for Douyin and Xiaohongshu"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -27,6 +27,7 @@ dependencies = [
     "ffmpeg-python",
     "tqdm",
     "dashscope",
+    "f2>=0.0.1.7",
 ]
 
 [project.optional-dependencies]
@@ -37,9 +38,9 @@ web = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yzfly/douyin-mcp-server"
-Repository = "https://github.com/yzfly/douyin-mcp-server"
-Issues = "https://github.com/yzfly/douyin-mcp-server/issues"
+Homepage = "https://github.com/Fuqianjiao/SocialScript"
+Repository = "https://github.com/Fuqianjiao/SocialScript"
+Issues = "https://github.com/Fuqianjiao/SocialScript/issues"
 
 [project.scripts]
 douyin-mcp-server = "douyin_mcp_server.server:main"

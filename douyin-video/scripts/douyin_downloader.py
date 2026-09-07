@@ -29,6 +29,8 @@ import json
 import argparse
 import tempfile
 import shutil
+import asyncio
+import time
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -62,18 +64,28 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1'
 }
 
+SIGNED_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+    'Referer': 'https://www.douyin.com/',
+}
+
 # 硅基流动 API 配置
 DEFAULT_API_BASE_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
-DEFAULT_MODEL = "FunAudioLLM/SenseVoiceSmall"
+DEFAULT_MODEL = "TeleAI/TeleSpeechASR"
 
 
 class DouyinProcessor:
     """抖音视频处理器"""
 
-    def __init__(self, api_key: str = "", api_base_url: Optional[str] = None, model: Optional[str] = None):
+    def __init__(self, api_key: str = "", api_base_url: Optional[str] = None,
+                 model: Optional[str] = None, douyin_cookie: str = ""):
         self.api_key = api_key
         self.api_base_url = api_base_url or DEFAULT_API_BASE_URL
         self.model = model or DEFAULT_MODEL
+        cookie = (douyin_cookie or os.getenv("DOUYIN_COOKIE", "")).strip()
+        if cookie.lower().startswith("cookie:"):
+            cookie = cookie.split(":", 1)[1].strip()
+        self.douyin_cookie = " ".join(cookie.splitlines()).strip()
         self.temp_dir = Path(tempfile.mkdtemp())
 
     def __del__(self):
@@ -81,20 +93,93 @@ class DouyinProcessor:
         if hasattr(self, 'temp_dir') and self.temp_dir.exists():
             shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def parse_share_url(self, share_text: str) -> dict:
-        """从分享文本中提取无水印视频链接"""
-        # 提取分享链接
+    def _resolve_video_id(self, share_text: str) -> tuple[str, str]:
+        """从分享文本或跳转地址中提取视频 ID。"""
         urls = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', share_text)
         if not urls:
             raise ValueError("未找到有效的分享链接")
 
         share_url = urls[0]
-        share_response = requests.get(share_url, headers=HEADERS)
-        video_id = share_response.url.split("?")[0].strip("/").split("/")[-1]
+        if not re.match(
+            r'^https?://(?:[a-z0-9-]+\.)?(?:douyin\.com|iesdouyin\.com)(?:[/:?#]|$)',
+            share_url,
+            flags=re.IGNORECASE,
+        ):
+            raise ValueError("仅支持 douyin.com、v.douyin.com 或 iesdouyin.com 的分享链接")
+        direct_match = re.search(r'/(?:video|note)/(\d+)', share_url)
+        if direct_match:
+            return direct_match.group(1), share_url
+
+        headers = dict(HEADERS)
+        if self.douyin_cookie:
+            headers['Cookie'] = self.douyin_cookie
+        try:
+            share_response = requests.get(
+                share_url, headers=headers, allow_redirects=True, timeout=20
+            )
+            share_response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ValueError(f"抖音分享链接访问失败：{exc}") from exc
+
+        match = re.search(r'/(?:video|note)/(\d+)', share_response.url)
+        if not match:
+            match = re.search(r'/(?:video|note)/(\d+)', share_response.text)
+        if not match:
+            raise ValueError("分享链接已失效或被抖音拦截，请在抖音中重新复制分享链接后再试")
+        return match.group(1), share_response.url
+
+    def _parse_with_signature(self, video_id: str) -> dict:
+        """使用 f2 生成 msToken/X-Bogus，并携带用户 Cookie 请求作品数据。"""
+        if not self.douyin_cookie:
+            raise ValueError("抖音已要求登录验证，请先在设置中配置抖音 Cookie")
+
+        try:
+            from f2.apps.douyin.handler import DouyinHandler
+        except ImportError as exc:
+            raise RuntimeError("缺少 f2 解析依赖，请重新执行 uv sync") from exc
+
+        async def fetch():
+            kwargs = {
+                'headers': {
+                    **SIGNED_HEADERS,
+                    'Referer': f'https://www.douyin.com/video/{video_id}',
+                },
+                'proxies': {'http://': None, 'https://': None},
+                'cookie': self.douyin_cookie,
+                'timeout': 20,
+                'max_retries': 1,
+            }
+            return await DouyinHandler(kwargs).fetch_one_video(aweme_id=video_id)
+
+        try:
+            detail = asyncio.run(fetch())
+            raw = detail._to_raw() or {}
+        except Exception as exc:
+            raise ValueError(
+                "抖音登录验证失败，请更新 Cookie 后重试；若刚更新，请确认 Cookie 来自 douyin.com"
+            ) from exc
+
+        aweme = raw.get('aweme_detail') or {}
+        video = aweme.get('video') or {}
+        bit_rates = video.get('bit_rate') or []
+        url_list = []
+        if bit_rates:
+            url_list = (bit_rates[0].get('play_addr') or {}).get('url_list') or []
+        if not url_list:
+            url_list = (video.get('play_addr') or {}).get('url_list') or []
+        if not url_list:
+            raise ValueError("作品数据中没有可用的视频地址，可能是图文作品、私密作品或已删除作品")
+
+        title = (aweme.get('desc') or f'douyin_{video_id}').strip()
+        title = re.sub(r'[\\/:*?"<>|]', '_', title)
+        return {'url': url_list[0], 'title': title, 'video_id': video_id}
+
+    def _parse_legacy_page(self, video_id: str) -> dict:
+        """兼容仍包含 videoInfoRes 的旧版抖音分享页。"""
         share_url = f'https://www.iesdouyin.com/share/video/{video_id}'
 
         # 获取视频页面内容
-        response = requests.get(share_url, headers=HEADERS)
+        response = requests.get(share_url, headers=HEADERS, timeout=20)
         response.raise_for_status()
 
         pattern = re.compile(
@@ -111,14 +196,21 @@ class DouyinProcessor:
         VIDEO_ID_PAGE_KEY = "video_(id)/page"
         NOTE_ID_PAGE_KEY = "note_(id)/page"
 
-        if VIDEO_ID_PAGE_KEY in json_data["loaderData"]:
-            original_video_info = json_data["loaderData"][VIDEO_ID_PAGE_KEY]["videoInfoRes"]
-        elif NOTE_ID_PAGE_KEY in json_data["loaderData"]:
-            original_video_info = json_data["loaderData"][NOTE_ID_PAGE_KEY]["videoInfoRes"]
+        loader_data = json_data.get("loaderData") or {}
+        if VIDEO_ID_PAGE_KEY in loader_data:
+            original_video_info = loader_data[VIDEO_ID_PAGE_KEY].get("videoInfoRes")
+        elif NOTE_ID_PAGE_KEY in loader_data:
+            original_video_info = loader_data[NOTE_ID_PAGE_KEY].get("videoInfoRes")
         else:
-            raise Exception("无法从JSON中解析视频或图集信息")
+            original_video_info = None
 
-        data = original_video_info["item_list"][0]
+        if not original_video_info:
+            raise ValueError("抖音页面已不再返回 videoInfoRes")
+
+        item_list = original_video_info.get("item_list") or []
+        if not item_list:
+            raise ValueError("抖音页面没有返回作品数据")
+        data = item_list[0]
 
         # 获取视频信息
         video_url = data["video"]["play_addr"]["url_list"][0].replace("playwm", "play")
@@ -132,6 +224,20 @@ class DouyinProcessor:
             "title": desc,
             "video_id": video_id
         }
+
+    def parse_share_url(self, share_text: str) -> dict:
+        """从分享文本中提取无水印视频链接。"""
+        video_id, _ = self._resolve_video_id(share_text)
+
+        if self.douyin_cookie:
+            return self._parse_with_signature(video_id)
+
+        try:
+            return self._parse_legacy_page(video_id)
+        except Exception as exc:
+            raise ValueError(
+                "抖音页面结构已更新，需要登录验证。请点击右上角设置，配置抖音 Cookie 后重试"
+            ) from exc
 
     def download_video(self, video_info: dict, output_dir: Optional[Path] = None, show_progress: bool = True) -> Path:
         """下载视频"""
@@ -248,29 +354,45 @@ class DouyinProcessor:
 
     def transcribe_single_audio(self, audio_path: Path) -> str:
         """转录单个音频文件"""
-        files = {
-            'file': (audio_path.name, open(audio_path, 'rb'), 'audio/mpeg'),
-            'model': (None, self.model)
-        }
-
         headers = {
             "Authorization": f"Bearer {self.api_key}"
         }
+        retryable_statuses = {429, 502, 503, 504}
+        max_attempts = 3
 
-        try:
-            response = requests.post(self.api_base_url, files=files, headers=headers)
-            response.raise_for_status()
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with open(audio_path, 'rb') as audio_file:
+                    files = {
+                        'file': (audio_path.name, audio_file, 'audio/mpeg'),
+                        'model': (None, self.model)
+                    }
+                    response = requests.post(
+                        self.api_base_url,
+                        files=files,
+                        headers=headers,
+                        timeout=120,
+                    )
 
-            result = response.json()
-            if 'text' in result:
-                return result['text']
-            else:
-                return response.text
+                if response.status_code in retryable_statuses and attempt < max_attempts:
+                    time.sleep(2 ** (attempt - 1))
+                    continue
 
-        except Exception as e:
-            raise Exception(f"提取文字时出错: {str(e)}")
-        finally:
-            files['file'][1].close()
+                response.raise_for_status()
+                result = response.json()
+                return result.get('text', response.text)
+            except requests.RequestException as exc:
+                status_code = getattr(exc.response, 'status_code', None)
+                if status_code in retryable_statuses and attempt < max_attempts:
+                    time.sleep(2 ** (attempt - 1))
+                    continue
+                if status_code == 503:
+                    raise Exception(
+                        f"模型 {self.model} 暂不可用。请切换为 TeleAI/TeleSpeechASR 后重试"
+                    ) from exc
+                raise Exception(f"提取文字时出错: {str(exc)}") from exc
+
+        raise Exception(f"模型 {self.model} 多次请求失败，请稍后重试")
 
     def extract_text_from_audio(self, audio_path: Path, show_progress: bool = True) -> str:
         """从音频文件中提取文字（支持大文件自动分段）"""
@@ -327,9 +449,9 @@ class DouyinProcessor:
                 file_path.unlink()
 
 
-def get_video_info(share_link: str) -> dict:
+def get_video_info(share_link: str, douyin_cookie: str = "") -> dict:
     """获取视频信息和下载链接"""
-    processor = DouyinProcessor()
+    processor = DouyinProcessor(douyin_cookie=douyin_cookie)
     return processor.parse_share_url(share_link)
 
 
@@ -341,7 +463,8 @@ def download_video(share_link: str, output_dir: str = ".") -> Path:
 
 
 def extract_text(share_link: str, api_key: Optional[str] = None, output_dir: Optional[str] = None,
-                 save_video: bool = False, show_progress: bool = True) -> dict:
+                 save_video: bool = False, show_progress: bool = True,
+                 douyin_cookie: str = "", model: Optional[str] = None) -> dict:
     """
     从视频中提取文案并保存到文件
 
@@ -352,7 +475,7 @@ def extract_text(share_link: str, api_key: Optional[str] = None, output_dir: Opt
     if not api_key:
         raise ValueError("未设置环境变量 API_KEY，请先获取硅基流动 API 密钥")
 
-    processor = DouyinProcessor(api_key)
+    processor = DouyinProcessor(api_key, model=model, douyin_cookie=douyin_cookie)
 
     if show_progress:
         print("正在解析抖音分享链接...")

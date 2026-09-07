@@ -50,6 +50,7 @@ temp/
 # Local
 .env
 output/
+logs/
 context/
 prompt.md
 *.mp3

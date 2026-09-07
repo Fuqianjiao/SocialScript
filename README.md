@@ -1,10 +1,15 @@
-# 短视频文案提取器
+# SocialScript — 社媒运营口播提取工具
 
 [![PyPI version](https://badge.fury.io/py/douyin-mcp-server.svg)](https://badge.fury.io/py/douyin-mcp-server)
 [![Python version](https://img.shields.io/pypi/pyversions/douyin-mcp-server.svg)](https://pypi.org/project/douyin-mcp-server/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-从短视频分享链接下载无水印视频，AI 自动提取语音文案。
+SocialScript 是一款面向内容创作者和社媒运营人员的本地口播提取工具。
+目前支持抖音和小红书：粘贴分享链接后，即可解析视频信息、获取无水印视频，
+并通过 AI 语音识别生成可复制、可下载的口播文案。
+
+适用于爆款内容研究、竞品分析、选题拆解、脚本学习和素材归档等场景。
+API Key 与平台 Cookie 保存在浏览器本地，仅在解析时发送给本机服务。
 
 ![WebUI 界面预览](douyin-video.png)
 
@@ -15,7 +20,8 @@
 ## ✨ 功能特性
 
 - 🎬 **无水印视频** - 获取高质量无水印视频下载链接
-- 🎙️ **AI 语音识别** - 使用硅基流动 SenseVoice 自动提取文案
+- 📱 **双平台解析** - 支持抖音和小红书分享链接
+- 🎙️ **AI 语音识别** - 使用硅基流动 TeleSpeechASR 自动提取文案
 - 📑 **大文件支持** - 自动分段处理超过 1 小时或 50MB 的音频
 - 🌐 **WebUI** - 现代化浏览器界面，无需命令行
 - 🔌 **MCP 集成** - 支持 Claude Desktop 等 AI 应用
@@ -40,8 +46,8 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/yzfly/douyin-mcp-server.git
-cd douyin-mcp-server
+git clone https://github.com/Fuqianjiao/SocialScript.git
+cd SocialScript
 
 # 2. 安装依赖
 uv sync
@@ -144,8 +150,8 @@ Claude：我来帮你提取视频文案...
 ### 安装
 
 ```bash
-git clone https://github.com/yzfly/douyin-mcp-server.git
-cd douyin-mcp-server
+git clone https://github.com/Fuqianjiao/SocialScript.git
+cd SocialScript
 uv sync
 ```
 
@@ -223,7 +229,7 @@ output/
 
 语音识别使用 [硅基流动 SenseVoice API](https://cloud.siliconflow.cn/)：
 
-- 模型：`FunAudioLLM/SenseVoiceSmall`
+- 推荐模型：`TeleAI/TeleSpeechASR`
 - 限制：单次最大 1 小时 / 50MB（已自动处理）
 - 费用：新用户有免费额度
 

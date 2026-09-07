@@ -28,15 +28,24 @@ import requests
 
 # 导入抖音处理模块
 from douyin_downloader import get_video_info, extract_text, HEADERS
+from xiaohongshu_downloader import get_xiaohongshu_video_info, extract_xiaohongshu_text
 
-app = FastAPI(title="抖音文案提取器", version="1.0.0")
+app = FastAPI(title="SocialScript 社媒运营口播提取工具", version="1.0.0")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+VIDEO_INFO_CACHE: dict[str, dict] = {}
+
+
+def is_xiaohongshu_url(value: str) -> bool:
+    return bool(re.search(r"https?://(?:[^/]+\.)?(?:xiaohongshu\.com|xhslink\.com|xhslink\.cn)(?:[/:?#]|$)", value, re.I))
 
 
 class VideoRequest(BaseModel):
     """视频请求模型"""
     url: str
     api_key: str = ""  # 可选，从前端传入
+    model: str = "TeleAI/TeleSpeechASR"  # 硅基流动语音识别模型
+    douyin_cookie: str = ""  # 可选，仅用于本次本地解析请求
+    xiaohongshu_cookie: str = ""  # 可选，仅用于本次小红书解析请求
 
 
 class VideoInfoResponse(BaseModel):
@@ -78,7 +87,16 @@ async def health_check():
 async def get_info(req: VideoRequest):
     """获取视频信息（无需 API_KEY）"""
     try:
-        info = await asyncio.to_thread(get_video_info, req.url)
+        if is_xiaohongshu_url(req.url):
+            info = await asyncio.to_thread(
+                get_xiaohongshu_video_info,
+                req.url,
+                req.xiaohongshu_cookie or os.getenv("XIAOHONGSHU_COOKIE", ""),
+            )
+        else:
+            douyin_cookie = req.douyin_cookie or os.getenv("DOUYIN_COOKIE", "")
+            info = await asyncio.to_thread(get_video_info, req.url, douyin_cookie)
+        VIDEO_INFO_CACHE[info["video_id"]] = info
         return VideoInfoResponse(
             success=True,
             video_id=info["video_id"],
@@ -101,9 +119,25 @@ async def extract_transcript(req: VideoRequest):
         )
 
     try:
-        result = await asyncio.to_thread(
-            extract_text, req.url, api_key=api_key, show_progress=False
-        )
+        model = req.model.strip() or "TeleAI/TeleSpeechASR"
+        if is_xiaohongshu_url(req.url):
+            result = await asyncio.to_thread(
+                extract_xiaohongshu_text,
+                req.url,
+                api_key,
+                model,
+                req.xiaohongshu_cookie or os.getenv("XIAOHONGSHU_COOKIE", ""),
+            )
+        else:
+            result = await asyncio.to_thread(
+                extract_text,
+                req.url,
+                api_key=api_key,
+                model=model,
+                show_progress=False,
+                douyin_cookie=req.douyin_cookie or os.getenv("DOUYIN_COOKIE", "")
+            )
+        VIDEO_INFO_CACHE[result["video_info"]["video_id"]] = result["video_info"]
         return ExtractResponse(
             success=True,
             video_id=result["video_info"]["video_id"],
@@ -131,8 +165,12 @@ async def download_video(video_id: str, filename: str = "video.mp4"):
         raise HTTPException(status_code=400, detail="无效的视频 ID")
 
     try:
-        share_url = f"https://www.iesdouyin.com/share/video/{video_id}"
-        info = await asyncio.to_thread(get_video_info, share_url)
+        info = VIDEO_INFO_CACHE.get(video_id)
+        if not info:
+            share_url = f"https://www.iesdouyin.com/share/video/{video_id}"
+            info = await asyncio.to_thread(
+                get_video_info, share_url, os.getenv("DOUYIN_COOKIE", "")
+            )
 
         # 完整的请求头，模拟浏览器访问
         download_headers = {

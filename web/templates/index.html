@@ -134,14 +134,14 @@
                 <div class="flex items-center gap-4">
                     <button @click="showSettings = true"
                             class="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm cursor-pointer hover:opacity-80 transition-smooth"
-                            :class="apiKeyConfigured ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'">
+                            :class="apiKeyConfigured && (douyinCookie || xiaohongshuCookie) ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'">
                         <span class="relative flex h-2 w-2">
                             <span class="absolute inline-flex h-full w-full rounded-full opacity-75"
-                                  :class="apiKeyConfigured ? 'bg-green-400 animate-ping' : 'bg-amber-400'"></span>
+                                  :class="apiKeyConfigured && (douyinCookie || xiaohongshuCookie) ? 'bg-green-400 animate-ping' : 'bg-amber-400'"></span>
                             <span class="relative inline-flex rounded-full h-2 w-2"
-                                  :class="apiKeyConfigured ? 'bg-green-500' : 'bg-amber-500'"></span>
+                                  :class="apiKeyConfigured && (douyinCookie || xiaohongshuCookie) ? 'bg-green-500' : 'bg-amber-500'"></span>
                         </span>
-                        <span x-text="apiKeyConfigured ? 'API 已连接' : '点击配置 API'"></span>
+                        <span x-text="apiKeyConfigured && (douyinCookie || xiaohongshuCookie) ? '解析配置已连接' : '点击完成配置'"></span>
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -160,7 +160,7 @@
         </div>
     </nav>
 
-    <!-- Settings Modal (API Key Configuration) -->
+    <!-- Settings Modal -->
     <div x-show="showSettings" x-transition.opacity class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
          @click.self="showSettings = false">
         <div x-show="showSettings" x-transition:enter="transition ease-out duration-200"
@@ -174,8 +174,8 @@
                         </svg>
                     </div>
                     <div>
-                        <h3 class="text-lg font-semibold text-douyin-gray-900">API 配置</h3>
-                        <p class="text-xs text-douyin-gray-400">配置硅基流动 API Key</p>
+                        <h3 class="text-lg font-semibold text-douyin-gray-900">解析配置</h3>
+                        <p class="text-xs text-douyin-gray-400">配置语音识别与平台登录信息</p>
                     </div>
                 </div>
                 <button @click="showSettings = false" class="w-8 h-8 rounded-full hover:bg-douyin-gray-100 flex items-center justify-center">
@@ -216,26 +216,88 @@
                             </button>
                         </div>
                     </div>
-                    <p class="mt-2 text-xs text-douyin-gray-400">API Key 仅保存在浏览器本地，不会上传到服务器</p>
+                    <p class="mt-2 text-xs text-douyin-gray-400">仅保存在浏览器本地，提取时只发送到本机服务</p>
+                </div>
+
+                <!-- Speech Model Input -->
+                <div>
+                    <label class="block text-sm font-medium text-douyin-gray-700 mb-2">语音识别模型</label>
+                    <input
+                        x-model="modelInput"
+                        list="speech-model-options"
+                        placeholder="TeleAI/TeleSpeechASR"
+                        class="w-full px-4 py-3 text-sm border border-douyin-gray-200 rounded-xl focus-ring transition-smooth font-mono"
+                    >
+                    <datalist id="speech-model-options">
+                        <option value="TeleAI/TeleSpeechASR"></option>
+                        <option value="FunAudioLLM/SenseVoiceSmall"></option>
+                    </datalist>
+                    <p class="mt-2 text-xs text-douyin-gray-400">推荐 TeleSpeechASR；SenseVoiceSmall 已下线，请勿继续使用</p>
+                </div>
+
+                <!-- Douyin Cookie Input -->
+                <div>
+                    <label class="block text-sm font-medium text-douyin-gray-700 mb-2">抖音 Cookie</label>
+                    <div class="relative">
+                        <textarea
+                            x-model="douyinCookieInput"
+                            rows="3"
+                            placeholder="从已登录的 douyin.com 请求中复制完整 Cookie"
+                            class="w-full px-4 py-3 text-xs border border-douyin-gray-200 rounded-xl resize-none focus-ring transition-smooth font-mono"
+                        ></textarea>
+                    </div>
+                    <p class="mt-2 text-xs text-douyin-gray-400">仅保存在当前浏览器，并只发送到本机解析服务；请勿把 Cookie 分享给他人</p>
+                    <details class="mt-2 text-xs text-douyin-gray-500">
+                        <summary class="cursor-pointer hover:text-douyin-gray-700">如何获取 Cookie？</summary>
+                        <ol class="mt-2 ml-4 list-decimal space-y-1 leading-relaxed">
+                            <li>在浏览器登录 <span class="font-mono">douyin.com</span></li>
+                            <li>按 F12 打开开发者工具，选择「网络 / Network」</li>
+                            <li>刷新页面并点开任意一个 <span class="font-mono">douyin.com</span> 请求</li>
+                            <li>在「请求标头」中复制 <span class="font-mono">Cookie:</span> 后面的完整内容</li>
+                        </ol>
+                    </details>
+                </div>
+
+                <!-- Xiaohongshu Cookie Input -->
+                <div>
+                    <label class="block text-sm font-medium text-douyin-gray-700 mb-2">小红书 Cookie</label>
+                    <div class="relative">
+                        <textarea
+                            x-model="xiaohongshuCookieInput"
+                            rows="3"
+                            placeholder="从已登录的 xiaohongshu.com 请求中复制完整 Cookie"
+                            class="w-full px-4 py-3 text-xs border border-douyin-gray-200 rounded-xl resize-none focus-ring transition-smooth font-mono"
+                        ></textarea>
+                    </div>
+                    <p class="mt-2 text-xs text-douyin-gray-400">与抖音 Cookie 分开保存在当前浏览器，只发送到本机解析服务</p>
+                    <details class="mt-2 text-xs text-douyin-gray-500">
+                        <summary class="cursor-pointer hover:text-douyin-gray-700">如何获取小红书 Cookie？</summary>
+                        <ol class="mt-2 ml-4 list-decimal space-y-1 leading-relaxed">
+                            <li>在浏览器登录 <span class="font-mono">xiaohongshu.com</span></li>
+                            <li>按 F12 打开开发者工具，选择「网络 / Network」</li>
+                            <li>刷新页面并点开任意一个 <span class="font-mono">xiaohongshu.com</span> 请求</li>
+                            <li>在「请求标头」中复制 <span class="font-mono">Cookie:</span> 后面的完整内容</li>
+                        </ol>
+                    </details>
                 </div>
 
                 <!-- Status Indicator -->
-                <div class="p-4 rounded-xl" :class="apiKeyInput ? 'bg-green-50 border border-green-100' : 'bg-douyin-gray-50'">
+                <div class="p-4 rounded-xl" :class="apiKeyInput && (douyinCookieInput || xiaohongshuCookieInput) ? 'bg-green-50 border border-green-100' : 'bg-douyin-gray-50'">
                     <div class="flex items-center gap-3">
                         <div class="w-10 h-10 rounded-lg flex items-center justify-center"
-                             :class="apiKeyInput ? 'bg-green-100' : 'bg-douyin-gray-200'">
-                            <svg x-show="apiKeyInput" class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                             :class="apiKeyInput && (douyinCookieInput || xiaohongshuCookieInput) ? 'bg-green-100' : 'bg-douyin-gray-200'">
+                            <svg x-show="apiKeyInput && (douyinCookieInput || xiaohongshuCookieInput)" class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
                                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
                             </svg>
-                            <svg x-show="!apiKeyInput" class="w-5 h-5 text-douyin-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg x-show="!apiKeyInput || (!douyinCookieInput && !xiaohongshuCookieInput)" class="w-5 h-5 text-douyin-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                             </svg>
                         </div>
                         <div>
-                            <p class="text-sm font-medium" :class="apiKeyInput ? 'text-green-700' : 'text-douyin-gray-600'"
-                               x-text="apiKeyInput ? 'API Key 已配置' : '未配置 API Key'"></p>
-                            <p class="text-xs" :class="apiKeyInput ? 'text-green-600' : 'text-douyin-gray-400'"
-                               x-text="apiKeyInput ? '可以使用文案提取功能' : '仅可获取视频信息'"></p>
+                            <p class="text-sm font-medium" :class="apiKeyInput && (douyinCookieInput || xiaohongshuCookieInput) ? 'text-green-700' : 'text-douyin-gray-600'"
+                               x-text="apiKeyInput && (douyinCookieInput || xiaohongshuCookieInput) ? '解析配置可用' : '配置尚未完成'"></p>
+                            <p class="text-xs" :class="apiKeyInput && (douyinCookieInput || xiaohongshuCookieInput) ? 'text-green-600' : 'text-douyin-gray-400'"
+                               x-text="`API Key：${apiKeyInput ? '已配置' : '未配置'} · 模型：${modelInput || '未配置'} · 抖音：${douyinCookieInput ? '已配置' : '未配置'} · 小红书：${xiaohongshuCookieInput ? '已配置' : '未配置'}`"></p>
                         </div>
                     </div>
                 </div>
@@ -249,7 +311,7 @@
                         </svg>
                         获取 API Key
                     </a>
-                    <button @click="saveApiKey"
+                    <button @click="saveSettings"
                             class="flex-1 h-11 bg-gradient-douyin hover:opacity-90 text-white font-medium text-sm rounded-xl transition-smooth flex items-center justify-center gap-2 shadow-lg shadow-douyin-red/20">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
@@ -259,13 +321,13 @@
                 </div>
 
                 <!-- Clear Button -->
-                <button x-show="apiKey"
-                        @click="clearApiKey"
+                <button x-show="apiKey || douyinCookie || xiaohongshuCookie"
+                        @click="clearSettings"
                         class="w-full h-10 text-sm text-red-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-smooth flex items-center justify-center gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                     </svg>
-                    清除已保存的 API Key
+                    清除全部本地配置
                 </button>
             </div>
         </div>
@@ -287,8 +349,8 @@
             </div>
             <div class="space-y-4 text-sm text-douyin-gray-600">
                 <div class="p-4 bg-douyin-gray-50 rounded-xl">
-                    <p class="font-medium text-douyin-gray-900 mb-2">1. 配置 API Key</p>
-                    <p>点击顶部状态栏，在弹窗中输入 API Key</p>
+                    <p class="font-medium text-douyin-gray-900 mb-2">1. 完成解析配置</p>
+                    <p>点击顶部状态栏，输入 API Key 和已登录抖音的 Cookie</p>
                 </div>
                 <div class="p-4 bg-douyin-gray-50 rounded-xl">
                     <p class="font-medium text-douyin-gray-900 mb-2">2. 粘贴分享链接</p>
@@ -577,7 +639,7 @@
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                             </svg>
-                            <span>Powered by SiliconFlow SenseVoice</span>
+                            <span x-text="`Powered by SiliconFlow · ${model}`"></span>
                         </div>
                         <div class="flex items-center gap-1 text-xs text-douyin-gray-400">
                             <span x-text="videoInfo?.title" class="max-w-xs truncate"></span>
@@ -607,7 +669,7 @@
         <div class="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-douyin-gray-400">
             <p>Made with <span class="text-douyin-red">♥</span> by <a href="https://github.com/yzfly" target="_blank" class="hover:text-douyin-red transition-colors">yzfly</a></p>
             <div class="flex items-center gap-4">
-                <a href="https://github.com/yzfly/douyin-mcp-server" target="_blank" class="hover:text-douyin-red transition-colors flex items-center gap-1">
+                <a href="https://github.com/Fuqianjiao/SocialScript" target="_blank" class="hover:text-douyin-red transition-colors flex items-center gap-1">
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                     GitHub
                 </a>
@@ -636,10 +698,24 @@
                 showApiKey: false,
                 apiKey: '',
                 apiKeyInput: '',
+                model: 'TeleAI/TeleSpeechASR',
+                modelInput: 'TeleAI/TeleSpeechASR',
+                douyinCookie: '',
+                douyinCookieInput: '',
+                xiaohongshuCookie: '',
+                xiaohongshuCookieInput: '',
                 serverApiKeyConfigured: false,
 
                 get apiKeyConfigured() {
                     return this.serverApiKeyConfigured || !!this.apiKey;
+                },
+
+                get isXiaohongshuUrl() {
+                    return /(?:xiaohongshu\.com|xhslink\.(?:com|cn))/i.test(this.url);
+                },
+
+                get platformCookieConfigured() {
+                    return this.isXiaohongshuUrl ? !!this.xiaohongshuCookie : !!this.douyinCookie;
                 },
 
                 async checkHealth() {
@@ -648,6 +724,23 @@
                     if (savedKey) {
                         this.apiKey = savedKey;
                         this.apiKeyInput = savedKey;
+                    }
+                    const savedModel = localStorage.getItem('douyin_speech_model');
+                    if (savedModel && savedModel !== 'FunAudioLLM/SenseVoiceSmall') {
+                        this.model = savedModel;
+                        this.modelInput = savedModel;
+                    } else if (savedModel === 'FunAudioLLM/SenseVoiceSmall') {
+                        localStorage.setItem('douyin_speech_model', 'TeleAI/TeleSpeechASR');
+                    }
+                    const savedCookie = localStorage.getItem('douyin_cookie');
+                    if (savedCookie) {
+                        this.douyinCookie = savedCookie;
+                        this.douyinCookieInput = savedCookie;
+                    }
+                    const savedXiaohongshuCookie = localStorage.getItem('xiaohongshu_cookie');
+                    if (savedXiaohongshuCookie) {
+                        this.xiaohongshuCookie = savedXiaohongshuCookie;
+                        this.xiaohongshuCookieInput = savedXiaohongshuCookie;
                     }
 
                     try {
@@ -659,22 +752,48 @@
                     }
                 },
 
-                saveApiKey() {
-                    if (this.apiKeyInput) {
+                saveSettings() {
+                    if (this.apiKeyInput || this.serverApiKeyConfigured) {
                         this.apiKey = this.apiKeyInput;
-                        localStorage.setItem('douyin_api_key', this.apiKeyInput);
+                        this.model = this.modelInput.trim() || 'TeleAI/TeleSpeechASR';
+                        this.modelInput = this.model;
+                        localStorage.setItem('douyin_speech_model', this.model);
+                        if (this.apiKeyInput) {
+                            localStorage.setItem('douyin_api_key', this.apiKeyInput);
+                        }
+                        this.douyinCookie = this.douyinCookieInput.trim();
+                        if (this.douyinCookie) {
+                            localStorage.setItem('douyin_cookie', this.douyinCookie);
+                        } else {
+                            localStorage.removeItem('douyin_cookie');
+                        }
+                        this.xiaohongshuCookie = this.xiaohongshuCookieInput.trim();
+                        if (this.xiaohongshuCookie) {
+                            localStorage.setItem('xiaohongshu_cookie', this.xiaohongshuCookie);
+                        } else {
+                            localStorage.removeItem('xiaohongshu_cookie');
+                        }
                         this.showSettings = false;
-                        this.showToast('API Key 已保存');
+                        this.showToast('解析配置已保存');
                     } else {
                         this.showToast('请输入 API Key');
                     }
                 },
 
-                clearApiKey() {
+                clearSettings() {
                     this.apiKey = '';
                     this.apiKeyInput = '';
+                    this.model = 'TeleAI/TeleSpeechASR';
+                    this.modelInput = 'TeleAI/TeleSpeechASR';
+                    this.douyinCookie = '';
+                    this.douyinCookieInput = '';
+                    this.xiaohongshuCookie = '';
+                    this.xiaohongshuCookieInput = '';
                     localStorage.removeItem('douyin_api_key');
-                    this.showToast('API Key 已清除');
+                    localStorage.removeItem('douyin_speech_model');
+                    localStorage.removeItem('douyin_cookie');
+                    localStorage.removeItem('xiaohongshu_cookie');
+                    this.showToast('本地配置已清除');
                 },
 
                 resetState() {
@@ -710,7 +829,11 @@
                         const res = await fetch('/api/video/info', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ url: this.url })
+                            body: JSON.stringify({
+                                url: this.url,
+                                douyin_cookie: this.douyinCookie,
+                                xiaohongshu_cookie: this.xiaohongshuCookie
+                            })
                         });
                         const data = await res.json();
 
@@ -731,7 +854,7 @@
                     if (!this.url || this.loading) return;
 
                     // Check if API key is configured
-                    if (!this.apiKeyConfigured) {
+                    if (!this.apiKeyConfigured || !this.platformCookieConfigured) {
                         this.showSettings = true;
                         return;
                     }
@@ -753,7 +876,10 @@
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 url: this.url,
-                                api_key: this.apiKey  // Send local API key if available
+                                api_key: this.apiKey,
+                                model: this.model,
+                                douyin_cookie: this.douyinCookie,
+                                xiaohongshu_cookie: this.xiaohongshuCookie
                             })
                         });
                         const data = await res.json();

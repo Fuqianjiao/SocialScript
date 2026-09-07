@@ -41,7 +41,7 @@ HEADERS = {
 
 # 默认 API 配置
 SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
-DEFAULT_SILICONFLOW_MODEL = "FunAudioLLM/SenseVoiceSmall"
+DEFAULT_SILICONFLOW_MODEL = "TeleAI/TeleSpeechASR"
 DEFAULT_DASHSCOPE_MODEL = "qwen3-asr-flash"
 
 
