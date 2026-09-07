@@ -25,17 +25,17 @@ dependencies = [
     "mcp>=1.0.0",
     "requests",
     "ffmpeg-python",
+    "imageio-ffmpeg>=0.6.0",
     "tqdm",
     "dashscope",
     "f2>=0.0.1.7",
-]
-
-[project.optional-dependencies]
-web = [
     "fastapi",
     "uvicorn",
     "jinja2",
 ]
+
+[tool.vercel]
+entrypoint = "web.app:app"
 
 [project.urls]
 Homepage = "https://github.com/Fuqianjiao/SocialScript"

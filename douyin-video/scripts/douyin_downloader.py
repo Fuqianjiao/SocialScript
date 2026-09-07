@@ -69,6 +69,22 @@ SIGNED_HEADERS = {
     'Referer': 'https://www.douyin.com/',
 }
 
+
+def _ffmpeg_executable() -> str:
+    """优先使用系统 ffmpeg，Vercel 等环境回退到 wheel 内置版本。"""
+    configured = os.getenv("FFMPEG_BINARY", "").strip()
+    if configured:
+        return configured
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:
+        raise RuntimeError("未找到 ffmpeg，请安装 ffmpeg 或 imageio-ffmpeg") from exc
+
 # 硅基流动 API 配置
 DEFAULT_API_BASE_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
 DEFAULT_MODEL = "TeleAI/TeleSpeechASR"
@@ -285,7 +301,12 @@ class DouyinProcessor:
                 ffmpeg
                 .input(str(video_path))
                 .output(str(audio_path), acodec='libmp3lame', q=0)
-                .run(capture_stdout=True, capture_stderr=True, overwrite_output=True)
+                .run(
+                    cmd=_ffmpeg_executable(),
+                    capture_stdout=True,
+                    capture_stderr=True,
+                    overwrite_output=True,
+                )
             )
             if show_progress:
                 print(f"音频提取完成: {audio_path}")
@@ -337,7 +358,12 @@ class DouyinProcessor:
                     ffmpeg
                     .input(str(audio_path), ss=current_time, t=segment_duration)
                     .output(str(segment_path), acodec='libmp3lame', q=0)
-                    .run(capture_stdout=True, capture_stderr=True, overwrite_output=True)
+                    .run(
+                        cmd=_ffmpeg_executable(),
+                        capture_stdout=True,
+                        capture_stderr=True,
+                        overwrite_output=True,
+                    )
                 )
                 segments.append(segment_path)
 
