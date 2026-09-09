@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -19,6 +20,10 @@ XHS_HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9",
     "Referer": "https://www.xiaohongshu.com/",
 }
+
+DOWNLOAD_CHUNK_SIZE = 256 * 1024
+DOWNLOAD_MAX_ATTEMPTS = 4
+DOWNLOAD_RETRY_BACKOFF = 1
 
 
 def _normalize_cookie(cookie: str) -> str:
@@ -154,22 +159,80 @@ class XiaohongshuProcessor(DouyinProcessor):
         output_dir = Path(output_dir) if output_dir else self.temp_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         filepath = output_dir / f"{video_info['video_id']}.mp4"
-        headers = {**XHS_HEADERS, "Cookie": self.xiaohongshu_cookie}
-        with requests.get(
-            video_info["url"], headers=headers, stream=True,
-            allow_redirects=True, timeout=120
-        ) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-            if "text/html" in content_type:
-                raise ValueError("小红书视频地址已过期，请重新解析后再试")
-            with open(filepath, "wb") as output:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        output.write(chunk)
-        if not filepath.exists() or filepath.stat().st_size == 0:
-            raise ValueError("小红书视频下载结果为空")
-        return filepath
+        base_headers = {**XHS_HEADERS, "Cookie": self.xiaohongshu_cookie}
+        expected_size: int | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(1, DOWNLOAD_MAX_ATTEMPTS + 1):
+            downloaded = filepath.stat().st_size if filepath.exists() else 0
+            headers = dict(base_headers)
+            if downloaded:
+                headers["Range"] = f"bytes={downloaded}-"
+
+            try:
+                with requests.get(
+                    video_info["url"], headers=headers, stream=True,
+                    allow_redirects=True, timeout=(20, 120)
+                ) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "").lower()
+                    if "text/html" in content_type:
+                        raise ValueError("小红书视频地址已过期，请重新解析后再试")
+
+                    range_start = self._content_range_start(
+                        response.headers.get("content-range", "")
+                    )
+                    can_resume = downloaded > 0 and response.status_code == 206 \
+                        and range_start == downloaded
+                    if downloaded > 0 and not can_resume:
+                        downloaded = 0
+
+                    expected_size = self._expected_download_size(
+                        response.headers, downloaded if can_resume else 0
+                    ) or expected_size
+                    mode = "ab" if can_resume else "wb"
+                    with open(filepath, mode) as output:
+                        for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                            if chunk:
+                                output.write(chunk)
+
+                actual_size = filepath.stat().st_size
+                if expected_size is not None and actual_size != expected_size:
+                    raise requests.exceptions.ChunkedEncodingError(
+                        f"下载文件不完整：已下载 {actual_size} 字节，预期 {expected_size} 字节"
+                    )
+                if actual_size == 0:
+                    raise ValueError("小红书视频下载结果为空")
+                return filepath
+            except ValueError:
+                raise
+            except requests.exceptions.RequestException as exc:
+                last_error = exc
+                if attempt < DOWNLOAD_MAX_ATTEMPTS:
+                    time.sleep(DOWNLOAD_RETRY_BACKOFF * attempt)
+
+        downloaded = filepath.stat().st_size if filepath.exists() else 0
+        raise ValueError(
+            f"小红书视频下载中断，已自动重试 {DOWNLOAD_MAX_ATTEMPTS} 次"
+            f"（已下载 {downloaded} 字节）。请检查网络后重新提取；"
+            "若仍失败，视频地址可能已过期。"
+        ) from last_error
+
+    @staticmethod
+    def _content_range_start(content_range: str) -> int | None:
+        match = re.match(r"bytes\s+(\d+)-\d+/(?:\d+|\*)", content_range, re.I)
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _expected_download_size(headers, offset: int = 0) -> int | None:
+        content_range = headers.get("content-range", "")
+        match = re.match(r"bytes\s+\d+-\d+/(\d+)", content_range, re.I)
+        if match:
+            return int(match.group(1))
+        content_length = headers.get("content-length")
+        if content_length and content_length.isdigit():
+            return offset + int(content_length)
+        return None
 
 
 def get_xiaohongshu_video_info(share_link: str, xiaohongshu_cookie: str) -> dict:

@@ -4,18 +4,23 @@
 [![Python version](https://img.shields.io/pypi/pyversions/douyin-mcp-server.svg)](https://pypi.org/project/douyin-mcp-server/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-SocialScript 是一款面向内容创作者和社媒运营人员的本地口播提取工具。
-目前支持抖音和小红书：粘贴分享链接后，即可解析视频信息、获取无水印视频，
-并通过 AI 语音识别生成可复制、可下载的口播文案。
+SocialScript 是一款面向内容创作者和社媒运营人员的本地口播提取工具，
+基于 [@yzfly](https://github.com/yzfly) 的开源项目
+[douyin-mcp-server](https://github.com/yzfly/douyin-mcp-server) 二次开发。
+
+在原项目抖音解析与 AI 语音识别能力的基础上，本项目新增了**小红书视频解析**，
+并对双平台 WebUI、Cookie 配置和下载流程进行了适配。粘贴抖音或小红书分享链接后，
+即可解析视频信息、获取无水印视频，并生成可复制、可下载的口播文案。
+
+> 🙏 感谢原作者 [@yzfly](https://github.com/yzfly) 开源核心项目。
+> SocialScript 是由社区维护的二次开发版本，与原作者及平台官方无隶属关系。
 
 适用于爆款内容研究、竞品分析、选题拆解、脚本学习和素材归档等场景。
 API Key 与平台 Cookie 保存在浏览器本地，仅在解析时发送给本机服务。
 
 ![WebUI 界面预览](douyin-video.png)
 
-<a href="https://glama.ai/mcp/servers/@yzfly/douyin-mcp-server">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@yzfly/douyin-mcp-server/badge" alt="douyin-mcp-server MCP server" />
-</a>
+原项目 MCP 页面：[yzfly/douyin-mcp-server on Glama](https://glama.ai/mcp/servers/@yzfly/douyin-mcp-server)
 
 ## ✨ 功能特性
 
@@ -277,8 +282,20 @@ output/
 
 ## 📄 许可证
 
-Apache License 2.0
+本项目延续原项目的 [Apache License 2.0](LICENSE)。使用、修改或分发时，
+请保留原项目的版权及许可证声明。
 
-## 👨‍💻 作者
+## 🙏 项目来源与致谢
 
-**yzfly** - [GitHub](https://github.com/yzfly) | [Email](mailto:yz.liu.me@gmail.com)
+SocialScript 是 [douyin-mcp-server](https://github.com/yzfly/douyin-mcp-server)
+的二次开发版本。感谢原作者开放源代码，为本项目提供了抖音解析、音视频处理、
+AI 语音识别、WebUI 与 MCP Server 等核心能力。
+
+- **原项目**：[yzfly/douyin-mcp-server](https://github.com/yzfly/douyin-mcp-server)
+- **原作者**：[@yzfly](https://github.com/yzfly) · [Email](mailto:yz.liu.me@gmail.com)
+- **二次开发版本**：[Fuqianjiao/SocialScript](https://github.com/Fuqianjiao/SocialScript)
+- **二次开发维护者**：[@Fuqianjiao](https://github.com/Fuqianjiao)
+- **主要扩展**：新增小红书支持，完善抖音、小红书双平台解析及相关 WebUI 体验
+
+如果这个项目对你有帮助，也欢迎前往原项目为作者点 Star，并在遵守许可证、
+平台规则和相关法律法规的前提下使用与分享。
