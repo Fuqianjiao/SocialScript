@@ -16,6 +16,58 @@ from xiaohongshu_downloader import XiaohongshuProcessor  # noqa: E402
 
 
 class XiaohongshuParserTests(unittest.TestCase):
+    def test_resolve_note_uses_intermediate_redirect_before_login(self):
+        note_url = (
+            "https://www.xiaohongshu.com/discovery/item/6a8d5e4b00000000100238fa"
+            "?xsec_token=token-value&xsec_source=app_share"
+        )
+        short_response = Mock()
+        short_response.url = "https://xhslink.cn/o/APQYdVaTzdv"
+        short_response.headers = {"location": note_url}
+
+        note_response = Mock()
+        note_response.url = note_url
+        note_response.headers = {
+            "location": "https://www.xiaohongshu.com/login?redirectPath=" + note_url
+        }
+
+        response = Mock()
+        response.url = "https://www.xiaohongshu.com/login"
+        response.headers = {}
+        response.history = [short_response, note_response]
+        response.raise_for_status.return_value = None
+
+        processor = XiaohongshuProcessor()
+        with patch("xiaohongshu_downloader.requests.get", return_value=response):
+            note_id, detail_url = processor._resolve_note(
+                "https://xhslink.cn/o/APQYdVaTzdv"
+            )
+
+        self.assertEqual(note_id, "6a8d5e4b00000000100238fa")
+        self.assertEqual(
+            detail_url,
+            "https://www.xiaohongshu.com/explore/6a8d5e4b00000000100238fa"
+            "?xsec_token=token-value&xsec_source=app_share",
+        )
+
+    def test_note_target_accepts_login_redirect_path(self):
+        login_url = (
+            "https://www.xiaohongshu.com/login?redirectPath="
+            "https%3A%2F%2Fwww.xiaohongshu.com%2Fdiscovery%2Fitem%2F"
+            "6a8d5e4b00000000100238fa%3Fxsec_source%3Dapp_share%26"
+            "xsec_token%3Dtoken-value"
+        )
+
+        target = XiaohongshuProcessor._note_target_from_url(login_url)
+
+        self.assertEqual(
+            target,
+            (
+                "6a8d5e4b00000000100238fa",
+                {"xsec_token": "token-value", "xsec_source": "app_share"},
+            ),
+        )
+
     def test_initial_state_accepts_xiaohongshu_javascript_collections(self):
         page = (
             '<script>window.__INITIAL_STATE__={"text":"&quot;",'

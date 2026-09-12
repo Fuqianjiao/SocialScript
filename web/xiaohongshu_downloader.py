@@ -5,7 +5,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import requests
 
@@ -41,6 +41,32 @@ class XiaohongshuProcessor(DouyinProcessor):
         super().__init__(api_key=api_key, model=model)
         self.xiaohongshu_cookie = _normalize_cookie(xiaohongshu_cookie)
 
+    @classmethod
+    def _note_target_from_url(cls, value: str) -> tuple[str, dict[str, str]] | None:
+        """从小红书地址或登录回跳参数中提取笔记 ID 和访问参数。"""
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower()
+        if not (host == "xiaohongshu.com" or host.endswith(".xiaohongshu.com")):
+            return None
+
+        query = parse_qs(parsed.query)
+        path_match = re.search(r"/(?:explore|discovery/item)/([0-9a-f]+)", parsed.path, re.I)
+        note_id = path_match.group(1) if path_match else (query.get("target_note_id") or [""])[0]
+        if note_id:
+            params = {
+                key: query[key][0]
+                for key in ("xsec_token", "xsec_source")
+                if query.get(key)
+            }
+            return note_id, params
+
+        for key in ("redirectPath", "redirect_path", "redirect_uri"):
+            for nested_url in query.get(key, []):
+                target = cls._note_target_from_url(nested_url)
+                if target:
+                    return target
+        return None
+
     def _resolve_note(self, share_text: str) -> tuple[str, str]:
         urls = re.findall(r"https?://[^\s]+", share_text)
         if not urls:
@@ -57,18 +83,22 @@ class XiaohongshuProcessor(DouyinProcessor):
         response = requests.get(share_url, headers=headers, allow_redirects=True, timeout=20)
         response.raise_for_status()
 
-        parsed = urlparse(response.url)
-        query = parse_qs(parsed.query)
-        path_match = re.search(r"/(?:explore|discovery/item)/([0-9a-f]+)", parsed.path)
-        note_id = path_match.group(1) if path_match else (query.get("target_note_id") or [""])[0]
-        if not note_id:
-            raise ValueError("没有从小红书分享链接中解析到笔记 ID")
+        candidates = [share_url]
+        for redirect_response in [*response.history, response]:
+            candidates.append(redirect_response.url)
+            location = redirect_response.headers.get("location")
+            if location:
+                candidates.append(urljoin(redirect_response.url, location))
 
-        params = {
-            key: query[key][0]
-            for key in ("xsec_token", "xsec_source")
-            if query.get(key)
-        }
+        target = next(
+            (result for candidate in candidates
+             if (result := self._note_target_from_url(candidate))),
+            None,
+        )
+        if not target:
+            raise ValueError("没有从小红书分享链接中解析到笔记 ID")
+        note_id, params = target
+
         detail_url = f"https://www.xiaohongshu.com/explore/{note_id}"
         if params:
             detail_url += "?" + urlencode(params)
