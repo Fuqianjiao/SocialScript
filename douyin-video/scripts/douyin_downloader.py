@@ -89,6 +89,53 @@ def _ffmpeg_executable() -> str:
 DEFAULT_API_BASE_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
 DEFAULT_MODEL = "TeleAI/TeleSpeechASR"
 
+AUDIO_MIME_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+}
+
+
+def _ffmpeg_stderr(exc: Exception) -> str:
+    """读取 ffmpeg-python 隐藏在异常对象中的 stderr。"""
+    stderr = getattr(exc, "stderr", b"") or b""
+    if isinstance(stderr, bytes):
+        return stderr.decode("utf-8", errors="replace").strip()
+    return str(stderr).strip()
+
+
+def _ffmpeg_user_message(exc: Exception) -> str:
+    """将常见 FFmpeg 失败转换为适合前端展示的提示。"""
+    stderr = _ffmpeg_stderr(exc)
+    lowered = stderr.lower()
+    if any(marker in lowered for marker in (
+        "does not contain any stream",
+        "matches no streams",
+        "output file #0 does not contain any stream",
+    )):
+        return "视频中没有可用的音轨，无法提取口播"
+    if any(marker in lowered for marker in (
+        "invalid data found when processing input",
+        "moov atom not found",
+        "error opening input",
+    )):
+        return "下载的视频文件损坏、未下载完整或不是有效的视频文件"
+    if any(marker in lowered for marker in (
+        "unknown encoder 'libmp3lame'",
+        "encoder (codec mp3) not found",
+    )):
+        return "当前运行环境缺少 MP3 编码器"
+    if "permission denied" in lowered:
+        return "FFmpeg 无法执行或没有文件读写权限"
+
+    details = [line.strip() for line in stderr.splitlines() if line.strip()]
+    if details:
+        return f"FFmpeg 处理失败：{details[-1][:500]}"
+    return f"FFmpeg 处理失败：{exc}"
+
+
+def _audio_mime_type(audio_path: Path) -> str:
+    return AUDIO_MIME_TYPES.get(audio_path.suffix.lower(), "application/octet-stream")
+
 
 class DouyinProcessor:
     """抖音视频处理器"""
@@ -290,29 +337,66 @@ class DouyinProcessor:
             print(f"\n视频下载完成: {filepath}")
         return filepath
 
+    @staticmethod
+    def _audio_output_options(output_path: Path) -> dict:
+        if output_path.suffix.lower() == ".wav":
+            return {"acodec": "pcm_s16le", "ac": 1, "ar": 16000}
+        return {"acodec": "libmp3lame", "q": 0}
+
+    def _convert_audio(self, input_path: Path, output_path: Path, **input_options) -> None:
+        stream = ffmpeg.input(str(input_path), **input_options)
+        (
+            stream
+            .output(str(output_path), **self._audio_output_options(output_path))
+            .run(
+                cmd=_ffmpeg_executable(),
+                capture_stdout=True,
+                capture_stderr=True,
+                overwrite_output=True,
+            )
+        )
+
+    @staticmethod
+    def _validate_audio_output(audio_path: Path) -> None:
+        if not audio_path.exists() or audio_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg 未生成有效的音频文件")
+
     def extract_audio(self, video_path: Path, show_progress: bool = True) -> Path:
         """从视频文件中提取音频"""
-        audio_path = video_path.with_suffix('.mp3')
+        if not video_path.exists() or video_path.stat().st_size == 0:
+            raise ValueError("下载的视频文件为空，无法提取音频")
+
+        mp3_path = video_path.with_suffix('.mp3')
 
         if show_progress:
             print("正在提取音频...")
         try:
-            (
-                ffmpeg
-                .input(str(video_path))
-                .output(str(audio_path), acodec='libmp3lame', q=0)
-                .run(
-                    cmd=_ffmpeg_executable(),
-                    capture_stdout=True,
-                    capture_stderr=True,
-                    overwrite_output=True,
-                )
-            )
+            self._convert_audio(video_path, mp3_path)
+            self._validate_audio_output(mp3_path)
             if show_progress:
-                print(f"音频提取完成: {audio_path}")
-            return audio_path
-        except Exception as e:
-            raise Exception(f"提取音频时出错: {str(e)}")
+                print(f"音频提取完成: {mp3_path}")
+            return mp3_path
+        except ffmpeg.Error as mp3_error:
+            message = _ffmpeg_user_message(mp3_error)
+            if message.startswith(("视频中没有", "下载的视频文件损坏")):
+                raise ValueError(f"提取音频失败：{message}") from mp3_error
+
+            mp3_path.unlink(missing_ok=True)
+            wav_path = video_path.with_suffix('.wav')
+            try:
+                self._convert_audio(video_path, wav_path)
+                self._validate_audio_output(wav_path)
+                if show_progress:
+                    print(f"MP3 编码不可用，已回退为 WAV: {wav_path}")
+                return wav_path
+            except Exception as wav_error:
+                wav_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"提取音频失败：{_ffmpeg_user_message(wav_error)}；"
+                    f"MP3 首次失败原因：{message}"
+                ) from wav_error
+        except Exception as exc:
+            raise RuntimeError(f"提取音频失败：{_ffmpeg_user_message(exc)}") from exc
 
     def get_audio_info(self, audio_path: Path) -> dict:
         """获取音频文件信息（时长和大小）"""
@@ -351,27 +435,27 @@ class DouyinProcessor:
             print(f"音频时长 {duration:.0f} 秒，将分割为 {total_segments} 段...")
 
         while current_time < duration:
-            segment_path = self.temp_dir / f"segment_{segment_index}.mp3"
+            suffix = audio_path.suffix.lower() if audio_path.suffix.lower() in AUDIO_MIME_TYPES else ".mp3"
+            segment_path = self.temp_dir / f"segment_{segment_index}{suffix}"
 
             try:
-                (
-                    ffmpeg
-                    .input(str(audio_path), ss=current_time, t=segment_duration)
-                    .output(str(segment_path), acodec='libmp3lame', q=0)
-                    .run(
-                        cmd=_ffmpeg_executable(),
-                        capture_stdout=True,
-                        capture_stderr=True,
-                        overwrite_output=True,
-                    )
+                self._convert_audio(
+                    audio_path,
+                    segment_path,
+                    ss=current_time,
+                    t=segment_duration,
                 )
+                self._validate_audio_output(segment_path)
                 segments.append(segment_path)
 
                 if show_progress:
                     print(f"  分割片段 {segment_index + 1}: {current_time:.0f}s - {min(current_time + segment_duration, duration):.0f}s")
 
-            except Exception as e:
-                raise Exception(f"分割音频片段 {segment_index} 时出错: {str(e)}")
+            except Exception as exc:
+                segment_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"分割音频片段 {segment_index} 失败：{_ffmpeg_user_message(exc)}"
+                ) from exc
 
             current_time += segment_duration
             segment_index += 1
@@ -390,7 +474,7 @@ class DouyinProcessor:
             try:
                 with open(audio_path, 'rb') as audio_file:
                     files = {
-                        'file': (audio_path.name, audio_file, 'audio/mpeg'),
+                        'file': (audio_path.name, audio_file, _audio_mime_type(audio_path)),
                         'model': (None, self.model)
                     }
                     response = requests.post(
