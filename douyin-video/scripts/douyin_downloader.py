@@ -70,6 +70,64 @@ SIGNED_HEADERS = {
 }
 
 
+def _normalize_cookie_header(cookie: str) -> str:
+    """兼容浏览器复制的单行或逐行 Cookie，并输出标准请求头格式。"""
+    value = (cookie or "").strip()
+    if value.lower().startswith("cookie:"):
+        value = value.split(":", 1)[1].strip()
+    if not value:
+        return ""
+
+    pairs = {}
+    for line in value.splitlines():
+        line = line.strip().rstrip(";")
+        if not line:
+            continue
+        if line.lower().startswith("cookie:"):
+            line = line.split(":", 1)[1].strip()
+        for part in line.split(";"):
+            part = part.strip()
+            if "=" not in part:
+                continue
+            name, item_value = part.split("=", 1)
+            name = name.strip()
+            if name:
+                pairs[name] = item_value.strip()
+    return "; ".join(f"{name}={item_value}" for name, item_value in pairs.items())
+
+
+def _exception_chain_text(exc: Exception) -> str:
+    """收集异常链文本，用于区分平台拒绝、登录失效和网络错误。"""
+    messages = []
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        messages.append(f"{type(current).__name__}: {current}")
+        current = current.__cause__ or current.__context__
+    return " | ".join(messages)
+
+
+def _douyin_parse_error(primary_error: Exception, fallback_error: Exception) -> str:
+    """把解析器底层异常转换为不误导用户的中文提示。"""
+    details = _exception_chain_text(primary_error) + " | " + _exception_chain_text(fallback_error)
+    lowered = details.lower()
+    if "403" in lowered or "forbidden" in lowered:
+        return (
+            "抖音接口拒绝了当前解析请求（HTTP 403）。Cookie 可能仍然有效，"
+            "常见原因是云端出口 IP、请求签名或账号环境触发风控；建议稍后重试或改用本地服务。"
+        )
+    if "401" in lowered or "unauthorized" in lowered:
+        return "抖音登录状态已失效（HTTP 401），请重新复制 douyin.com 的完整 Cookie 后重试"
+    if "fresh cookies" in lowered:
+        return "抖音要求更新访问凭证，请先在浏览器打开该作品，再重新复制 douyin.com 的完整 Cookie"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "访问抖音接口超时，请检查网络后重试"
+    if any(marker in lowered for marker in ("private", "not found", "unavailable", "deleted")):
+        return "该抖音作品可能已删除、设为私密或仅部分用户可见"
+    return "抖音解析失败，签名解析和备用解析均未取得可用的视频地址"
+
+
 def _ffmpeg_executable() -> str:
     """优先使用系统 ffmpeg，Vercel 等环境回退到 wheel 内置版本。"""
     configured = os.getenv("FFMPEG_BINARY", "").strip()
@@ -145,10 +203,8 @@ class DouyinProcessor:
         self.api_key = api_key
         self.api_base_url = api_base_url or DEFAULT_API_BASE_URL
         self.model = model or DEFAULT_MODEL
-        cookie = (douyin_cookie or os.getenv("DOUYIN_COOKIE", "")).strip()
-        if cookie.lower().startswith("cookie:"):
-            cookie = cookie.split(":", 1)[1].strip()
-        self.douyin_cookie = " ".join(cookie.splitlines()).strip()
+        cookie = douyin_cookie or os.getenv("DOUYIN_COOKIE", "")
+        self.douyin_cookie = _normalize_cookie_header(cookie)
         self.temp_dir = Path(tempfile.mkdtemp())
 
     def __del__(self):
@@ -237,6 +293,64 @@ class DouyinProcessor:
         title = re.sub(r'[\\/:*?"<>|]', '_', title)
         return {'url': url_list[0], 'title': title, 'video_id': video_id}
 
+    def _write_yt_dlp_cookie_file(self) -> Path:
+        """将请求头 Cookie 转成 yt-dlp 使用的 Netscape 临时文件。"""
+        cookie_file = self.temp_dir / "douyin-cookies.txt"
+        lines = ["# Netscape HTTP Cookie File"]
+        for pair in self.douyin_cookie.split("; "):
+            if "=" not in pair:
+                continue
+            name, value = pair.split("=", 1)
+            lines.append(f".douyin.com\tTRUE\t/\tTRUE\t0\t{name}\t{value}")
+        cookie_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        cookie_file.chmod(0o600)
+        return cookie_file
+
+    def _parse_with_yt_dlp(self, video_id: str) -> dict:
+        """使用 yt-dlp 作为 f2 被风控时的备用解析器。"""
+        try:
+            from yt_dlp import YoutubeDL
+        except ImportError as exc:
+            raise RuntimeError("缺少 yt-dlp 备用解析依赖，请重新执行 uv sync") from exc
+
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "skip_download": True,
+            "http_headers": SIGNED_HEADERS,
+        }
+        if self.douyin_cookie:
+            options["cookiefile"] = str(self._write_yt_dlp_cookie_file())
+
+        page_url = f"https://www.douyin.com/video/{video_id}"
+        with YoutubeDL(options) as downloader:
+            info = downloader.extract_info(page_url, download=False)
+        if not info:
+            raise ValueError("yt-dlp 没有返回作品数据")
+
+        video_url = info.get("url")
+        if not video_url:
+            candidates = [
+                item for item in info.get("formats") or []
+                if item.get("url") and item.get("vcodec") != "none"
+            ]
+            if candidates:
+                candidates.sort(
+                    key=lambda item: (
+                        item.get("height") or 0,
+                        item.get("tbr") or 0,
+                    ),
+                    reverse=True,
+                )
+                video_url = candidates[0]["url"]
+        if not video_url:
+            raise ValueError("yt-dlp 没有返回可用的视频地址")
+
+        title = (info.get("title") or info.get("description") or f"douyin_{video_id}").strip()
+        title = re.sub(r'[\\/:*?"<>|]', '_', title)
+        return {"url": video_url, "title": title, "video_id": video_id}
+
     def _parse_legacy_page(self, video_id: str) -> dict:
         """兼容仍包含 videoInfoRes 的旧版抖音分享页。"""
         share_url = f'https://www.iesdouyin.com/share/video/{video_id}'
@@ -293,14 +407,29 @@ class DouyinProcessor:
         video_id, _ = self._resolve_video_id(share_text)
 
         if self.douyin_cookie:
-            return self._parse_with_signature(video_id)
+            try:
+                return self._parse_with_signature(video_id)
+            except Exception as signature_error:
+                try:
+                    return self._parse_with_yt_dlp(video_id)
+                except Exception as fallback_error:
+                    try:
+                        return self._parse_legacy_page(video_id)
+                    except Exception:
+                        raise ValueError(
+                            _douyin_parse_error(signature_error, fallback_error)
+                        ) from fallback_error
 
         try:
             return self._parse_legacy_page(video_id)
-        except Exception as exc:
-            raise ValueError(
-                "抖音页面结构已更新，需要登录验证。请点击右上角设置，配置抖音 Cookie 后重试"
-            ) from exc
+        except Exception as legacy_error:
+            try:
+                return self._parse_with_yt_dlp(video_id)
+            except Exception as fallback_error:
+                raise ValueError(
+                    "抖音页面结构已更新，需要有效的 douyin.com Cookie；"
+                    "请先在浏览器打开该作品，再复制完整 Cookie 后重试"
+                ) from fallback_error
 
     def download_video(self, video_info: dict, output_dir: Optional[Path] = None, show_progress: bool = True) -> Path:
         """下载视频"""

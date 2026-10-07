@@ -29,6 +29,7 @@ dependencies = [
     "tqdm",
     "dashscope",
     "f2>=0.0.1.7",
+    "yt-dlp>=2026.8.19",
     "fastapi",
     "uvicorn",
     "jinja2",

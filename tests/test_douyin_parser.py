@@ -7,7 +7,7 @@ from unittest.mock import patch
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "douyin-video" / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from douyin_downloader import DouyinProcessor  # noqa: E402
+from douyin_downloader import DouyinProcessor, _normalize_cookie_header  # noqa: E402
 
 
 class _FakeDetail:
@@ -34,6 +34,18 @@ class _FakeHandler:
 
 
 class DouyinParserTests(unittest.TestCase):
+    def test_normalizes_multiline_cookie(self):
+        value = _normalize_cookie_header(
+            "Cookie: sessionid=abc\n"
+            "ttwid=xyz; passport_csrf_token=token==;\n"
+            "sessionid=new-value"
+        )
+
+        self.assertEqual(
+            value,
+            "sessionid=new-value; ttwid=xyz; passport_csrf_token=token==",
+        )
+
     def test_rejects_non_douyin_url(self):
         processor = DouyinProcessor()
         with self.assertRaisesRegex(ValueError, "仅支持"):
@@ -51,10 +63,63 @@ class DouyinParserTests(unittest.TestCase):
     def test_missing_cookie_has_clear_error(self):
         processor = DouyinProcessor()
         with patch.object(processor, "_parse_legacy_page", side_effect=KeyError("videoInfoRes")):
-            with self.assertRaisesRegex(ValueError, "配置抖音 Cookie"):
-                processor.parse_share_url(
+            with patch.object(processor, "_parse_with_yt_dlp", side_effect=ValueError("fresh cookies")):
+                with self.assertRaisesRegex(ValueError, "有效的 douyin.com Cookie"):
+                    processor.parse_share_url(
+                        "https://www.douyin.com/video/1234567890123456789"
+                    )
+
+    def test_falls_back_to_yt_dlp_after_signature_failure(self):
+        processor = DouyinProcessor(douyin_cookie="sessionid=test")
+        expected = {
+            "video_id": "1234567890123456789",
+            "title": "备用解析",
+            "url": "https://video.example/fallback.mp4",
+        }
+        with patch.object(
+            processor,
+            "_parse_with_signature",
+            side_effect=ValueError("Status Code: 403"),
+        ):
+            with patch.object(processor, "_parse_with_yt_dlp", return_value=expected):
+                result = processor.parse_share_url(
                     "https://www.douyin.com/video/1234567890123456789"
                 )
+
+        self.assertEqual(result, expected)
+
+    def test_reports_platform_rejection_instead_of_cookie_failure(self):
+        processor = DouyinProcessor(douyin_cookie="sessionid=test")
+        with patch.object(
+            processor,
+            "_parse_with_signature",
+            side_effect=ValueError("Status Code: 403 Forbidden"),
+        ):
+            with patch.object(
+                processor,
+                "_parse_with_yt_dlp",
+                side_effect=ValueError("Fresh cookies are needed"),
+            ):
+                with patch.object(
+                    processor,
+                    "_parse_legacy_page",
+                    side_effect=KeyError("videoInfoRes"),
+                ):
+                    with self.assertRaisesRegex(ValueError, "HTTP 403"):
+                        processor.parse_share_url(
+                            "https://www.douyin.com/video/1234567890123456789"
+                        )
+
+    def test_writes_cookie_file_without_logging_values(self):
+        processor = DouyinProcessor(
+            douyin_cookie="sessionid=abc; passport_csrf_token=token=="
+        )
+        cookie_file = processor._write_yt_dlp_cookie_file()
+        content = cookie_file.read_text(encoding="utf-8")
+
+        self.assertIn("\tsessionid\tabc", content)
+        self.assertIn("\tpassport_csrf_token\ttoken==", content)
+        self.assertEqual(cookie_file.stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":
