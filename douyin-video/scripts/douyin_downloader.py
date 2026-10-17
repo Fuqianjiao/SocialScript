@@ -67,7 +67,19 @@ HEADERS = {
 SIGNED_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
     'Referer': 'https://www.douyin.com/',
+    # 抖音 Argus 网关目前要求该头；缺失时即使 Cookie 中包含 UIFID，
+    # 作品详情接口仍会返回 403 Uifid Not Found。
+    'x-tt-argus': '1',
 }
+
+
+def _load_douyin_handler():
+    """延迟加载 f2，便于离线测试并保留清晰的依赖错误。"""
+    try:
+        from f2.apps.douyin.handler import DouyinHandler
+    except ImportError as exc:
+        raise RuntimeError("缺少 f2 解析依赖，请重新执行 uv sync") from exc
+    return DouyinHandler
 
 
 def _ffmpeg_executable() -> str:
@@ -196,10 +208,7 @@ class DouyinProcessor:
         if not self.douyin_cookie:
             raise ValueError("抖音已要求登录验证，请先在设置中配置抖音 Cookie")
 
-        try:
-            from f2.apps.douyin.handler import DouyinHandler
-        except ImportError as exc:
-            raise RuntimeError("缺少 f2 解析依赖，请重新执行 uv sync") from exc
+        DouyinHandler = _load_douyin_handler()
 
         async def fetch():
             kwargs = {
@@ -219,7 +228,8 @@ class DouyinProcessor:
             raw = detail._to_raw() or {}
         except Exception as exc:
             raise ValueError(
-                "抖音登录验证失败，请更新 Cookie 后重试；若刚更新，请确认 Cookie 来自 douyin.com"
+                f"抖音作品详情请求失败（{type(exc).__name__}）。Cookie 已传入，"
+                "但平台未返回有效数据；请检查 Cookie、网络或解析签名后重试"
             ) from exc
 
         aweme = raw.get('aweme_detail') or {}
@@ -316,7 +326,14 @@ class DouyinProcessor:
         if show_progress:
             print(f"正在下载视频: {video_info['title']}")
 
-        response = requests.get(video_info['url'], headers=HEADERS, stream=True)
+        # 视频地址由桌面端签名接口返回，下载时必须保持一致的 UA/Referer；
+        # 继续使用旧移动端请求头会被部分抖音 CDN 判定为盗链并返回 403。
+        response = requests.get(
+            video_info['url'],
+            headers=SIGNED_HEADERS,
+            stream=True,
+            timeout=60,
+        )
         response.raise_for_status()
 
         # 获取文件大小
